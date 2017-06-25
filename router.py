@@ -27,8 +27,11 @@ while True:
                 print('HELO from {}'.format(parts[0]))
             else:
                 assert len(parts) == 4
-                parts = (parts[2], b'', parts[3])
-                frontend.send_multipart(parts)
+                reply_parts = (parts[2], b'', parts[3])
+                try:
+                    frontend.send_multipart(reply_parts)
+                except zmq.error.ZMQError:
+                    print('Client {} went away. Dropping reply'.format(reply_parts[0]))
         else:
             parts = frontend.recv_multipart()
             print('from frontend: {}'.format(parts))
