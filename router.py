@@ -1,15 +1,16 @@
 from __future__ import print_function
 import zmq
+import os
 
 context = zmq.Context()
 
 frontend = context.socket(zmq.ROUTER)
 frontend.setsockopt(zmq.ROUTER_MANDATORY, 1)
-frontend.bind('tcp://*:5555')
+frontend.bind(os.environ.get('FRONTEND', 'tcp://*:5555'))
 
 backend = context.socket(zmq.ROUTER)
 backend.setsockopt(zmq.ROUTER_MANDATORY, 1)
-backend.bind('tcp://*:5556')
+backend.bind(os.environ.get('BACKEND', 'tcp://*:5556'))
 
 poller = zmq.Poller()
 poller.register(frontend, zmq.POLLIN)
@@ -19,27 +20,34 @@ while True:
     events = poller.poll()
     for socket, event in events:
         if socket == backend:
-            parts = backend.recv_multipart()
+            #service, _, client, response = backend.recv_multipart()
+            parts = backend.recv_multipart(copy=True)
             print('from backend: {}'.format(parts))
             if len(parts) == 3:
                 # This is a register call
+                #print(dir(parts[2]))
+                #assert parts[2].bytes == b'HELO'
                 assert parts[2] == b'HELO'
                 print('HELO from {}'.format(parts[0]))
             else:
                 assert len(parts) == 4
-                reply_parts = (parts[2], b'', parts[3])
+                service, _, client, response = parts
+                reply_parts = (client, b'', response)
                 try:
                     frontend.send_multipart(reply_parts)
                 except zmq.error.ZMQError:
-                    print('Client {} went away. Dropping reply'.format(reply_parts[0]))
+                    print('Client {} went away. Dropping reply'.format(client))
         else:
+            #client, _, service, args, kwargs = frontend.recv_multipart()
             parts = frontend.recv_multipart()
             print('from frontend: {}'.format(parts))
-            assert len(parts) == 4
-            send_parts = (parts[2], b'', parts[0], parts[3])
             try:
-                backend.send_multipart(send_parts)
+                client, _, service, command, args, kwargs = parts
+                parts = (service, b'', client, command, args, kwargs)
+                print('sending to backend: {}'.format(parts))
+                backend.send_multipart(parts)
             except zmq.error.ZMQError:
                 # No route to host?
-                reply_parts = (parts[0], b'', b'Service unavailable')
-                frontend.send_multipart(reply_parts)
+                parts = (client, b'', b'Service unavailable')
+                print('service unavailabe, notifying client.')
+                frontend.send_multipart(parts)
